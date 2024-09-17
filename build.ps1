@@ -1,3 +1,5 @@
+#format rust file
+rustfmt ./src/main.rs
 # Run 'cargo build' to build the project
 cargo build --release
 

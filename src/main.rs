@@ -28,6 +28,9 @@ fn main() -> ! {
     let b_down = gpiob.pb1.into_pull_up_input();
     let b_right = gpiob.pb2.into_pull_up_input();
     let b_left = gpiob.pb3.into_pull_up_input();
+    let mut b_start = gpiob.pb4.into_pull_up_input();
+    let b_pause = gpiob.pb5.into_pull_up_input();
+    let b_stop = gpiob.pb6.into_pull_up_input();
 
     let spi = dp.SPI1.spi(
         (NoPin::new(), NoPin::new(), gpioa.pa7),
@@ -36,9 +39,32 @@ fn main() -> ! {
         &clocks,
     );
 
-
-    
     const NUM_LEDS: usize = 64;
+    const RED: RGB8 = RGB8 {
+        r: 207,
+        g: 71,
+        b: 71,
+    };
+    const GREEN: RGB8 = RGB8 {
+        r: 110,
+        g: 163,
+        b: 55,
+    };
+    const BLACK: RGB8 = RGB8 {
+        r: 19,
+        g: 12,
+        b: 28,
+    };
+    const YELLOW: RGB8 = RGB8 {
+        r: 217,
+        g: 210,
+        b: 94,
+    };
+    const WHITE: RGB8 = RGB8 {
+        r: 250,
+        g: 250,
+        b: 250,
+    };
     let mut buffer = [0; NUM_LEDS * 12 + 20];
     let mut snake_buffer = [65u8; NUM_LEDS];
     #[derive(PartialEq)]
@@ -49,20 +75,6 @@ fn main() -> ! {
         LEFT,
     }
     let mut direction: DirectionEnum = DirectionEnum::LEFT;
-    snake_buffer[0] = 28;
-    snake_buffer[1] = 29;
-    snake_buffer[2] = 30;
-    // snake_buffer[3] = 31;
-    // snake_buffer[4] = 39;
-    // snake_buffer[5] = 38;
-    // snake_buffer[6] = 37;
-    // snake_buffer[7] = 36;
-    // snake_buffer[8] = 35;
-    // snake_buffer[9] = 34;
-    // snake_buffer[10] = 33;
-    // snake_buffer[11] = 32;
-    
-
     let mut ws = ws2812::prerendered::Ws2812::new(spi, buffer.as_mut_slice());
     let mut rng = Pcg32::seed_from_u64(0);
     let mut apple_pos: u8 = rng.gen_range(0..NUM_LEDS as u8);
@@ -70,8 +82,28 @@ fn main() -> ! {
     // Wait before start write for syncronization
     delay.delay(200.micros());
 
-    'main_loop:loop {
+    pre_game(
+        &mut ws,
+        &mut delay,
+        &mut b_start,
+        &mut snake_buffer,
+        &mut direction,
+    );
+
+    loop {
         //change snakes direction
+        if b_pause.is_low() {
+            pause(&mut ws, &mut delay, &mut b_start);
+        }
+        if b_stop.is_low() {
+            pre_game(
+                &mut ws,
+                &mut delay,
+                &mut b_start,
+                &mut snake_buffer,
+                &mut direction,
+            );
+        }
         if b_up.is_low() && !(direction == DirectionEnum::DOWN) {
             direction = DirectionEnum::UP;
         }
@@ -85,11 +117,18 @@ fn main() -> ! {
             direction = DirectionEnum::LEFT;
         }
 
-
         if (((snake_buffer[0] % 8) == 0) && (direction == DirectionEnum::LEFT))
             || (((snake_buffer[0] % 8) == 7) && (direction == DirectionEnum::RIGHT))
+            || ((snake_buffer[0] <= 7) && (direction == DirectionEnum::UP))
+            || ((snake_buffer[0] >= 56) && (direction == DirectionEnum::DOWN))
         {
-            break;
+            pre_game(
+                &mut ws,
+                &mut delay,
+                &mut b_start,
+                &mut snake_buffer,
+                &mut direction,
+            );
         }
 
         let snake_end_index = snake_buffer.iter().position(|&i| i == 65).unwrap() - 1;
@@ -114,12 +153,17 @@ fn main() -> ! {
             }
         }
 
-        if snake_buffer[0] > 64 {
-            break;
-        }
-
         for scale in &snake_buffer[1..] {
-            if *scale == snake_buffer[0] {break 'main_loop;}
+            if *scale == snake_buffer[0] {
+                pre_game(
+                    &mut ws,
+                    &mut delay,
+                    &mut b_start,
+                    &mut snake_buffer,
+                    &mut direction,
+                );
+                break;
+            }
         }
 
         if snake_buffer[0] == apple_pos {
@@ -132,12 +176,12 @@ fn main() -> ! {
 
         let data = (0..NUM_LEDS).map(|i| {
             if snake_buffer.contains(&(i as u8)) {
-                RGB8 { r: 0, g: 255, b: 0 }
+                GREEN
             } else {
                 if apple_pos == i as u8 {
-                    RGB8 { r: 255, g: 0, b: 0 }
+                    RED
                 } else {
-                    RGB8 { r: 0, g: 0, b: 0 }
+                    BLACK
                 }
             }
         });
@@ -145,9 +189,66 @@ fn main() -> ! {
         delay.delay(100.millis());
     }
 
-    loop {
-        let data = (0..NUM_LEDS).map(|_| RGB8 { r: 0, g: 0, b: 255 });
-        ws.write(brightness(data, 255)).unwrap();
-        delay.delay(100.millis());
+    fn pre_game(
+        ws: &mut ws2812_spi::prerendered::Ws2812<'_, stm32f4xx_hal::spi::Spi<pac::SPI1>>,
+        delay: &mut stm32f4xx_hal::timer::Delay<pac::TIM1, 1000000>,
+        b_start: &mut stm32f4xx_hal::gpio::Pin<'B', 4>,
+        snake_buffer: &mut [u8; NUM_LEDS],
+        direction: &mut DirectionEnum,
+    ) {
+        let s_array = [
+            12u8, 13, 18, 19, 25, 34, 35, 36, 37, 40, 46, 49, 50, 51, 52, 53, 6, 14, 15,
+        ];
+        loop {
+            let data = (0..NUM_LEDS).map(|i| {
+                if s_array.contains(&(i as u8)) {
+                    return GREEN;
+                }
+                if i == 7 || i == 5 {
+                    return YELLOW;
+                }
+                if i == 23 {
+                    return RED;
+                }
+
+                return BLACK;
+            });
+            ws.write(brightness(data, 255)).unwrap();
+            delay.delay(100.millis());
+            if b_start.is_low() {
+                break;
+            }
+        }
+        for elem in snake_buffer.iter_mut() {
+            *elem = 65;
+        }
+        snake_buffer[0] = 28;
+        snake_buffer[1] = 29;
+        snake_buffer[2] = 30;
+        // snake_buffer[3] = 31;
+        // snake_buffer[4] = 39;
+        // snake_buffer[5] = 38;
+        *direction = DirectionEnum::LEFT;
+    }
+
+    fn pause(
+        ws: &mut ws2812_spi::prerendered::Ws2812<'_, stm32f4xx_hal::spi::Spi<pac::SPI1>>,
+        delay: &mut stm32f4xx_hal::timer::Delay<pac::TIM1, 1000000>,
+        b_start: &mut stm32f4xx_hal::gpio::Pin<'B', 4>,
+    ) {
+        loop {
+            let s_array = [10, 18, 26, 34, 42, 50, 13, 21, 29, 37, 45, 53];
+            let data = (0..NUM_LEDS).map(|i| {
+                if s_array.contains(&(i as u8)) {
+                    return WHITE;
+                }
+                return BLACK;
+            });
+            ws.write(brightness(data, 255)).unwrap();
+            delay.delay(100.millis());
+            if b_start.is_low() {
+                break;
+            }
+        }
     }
 }
