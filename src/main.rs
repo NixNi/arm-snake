@@ -20,7 +20,7 @@ fn main() -> ! {
     // Configure APB bus clock to 48 MHz, cause ws2812b requires 3 Mbps SPI
     let rcc = dp.RCC.constrain();
     let clocks = rcc.cfgr.use_hse(25.MHz()).sysclk(48.MHz()).freeze();
-
+    //настраиваем пины
     let mut delay = dp.TIM1.delay_us(&clocks);
     let gpioa = dp.GPIOA.split();
     let gpiob = dp.GPIOB.split();
@@ -40,6 +40,7 @@ fn main() -> ! {
     );
 
     const NUM_LEDS: usize = 64;
+    //задаем цвета
     const RED: RGB8 = RGB8 {
         r: 207,
         g: 71,
@@ -65,9 +66,11 @@ fn main() -> ! {
         g: 250,
         b: 250,
     };
+    //создаем буффер для пикселй экрана, змейки.
     let mut buffer = [0; NUM_LEDS * 12 + 20];
     let mut snake_buffer = [65u8; NUM_LEDS];
     #[derive(PartialEq)]
+    //перечисляем направления движения
     enum DirectionEnum {
         UP,
         DOWN,
@@ -79,7 +82,7 @@ fn main() -> ! {
     let mut rng = Pcg32::seed_from_u64(0);
     let mut apple_pos: u8 = rng.gen_range(0..NUM_LEDS as u8);
 
-    // Wait before start write for syncronization
+    // Ждем перед синхронизацией
     delay.delay(200.micros());
 
     pre_game(
@@ -91,10 +94,11 @@ fn main() -> ! {
     );
 
     loop {
-        //change snakes direction
+        //если кнопка паузы нажата, то пауза
         if b_pause.is_low() {
             pause(&mut ws, &mut delay, &mut b_start);
         }
+        //если стоп нажат остановить игру, вернуться в исходное состояние
         if b_stop.is_low() {
             pre_game(
                 &mut ws,
@@ -104,6 +108,7 @@ fn main() -> ! {
                 &mut direction,
             );
         }
+        //поиск движение змейки, а также ограничение на движение в обратную сторону
         if b_up.is_low() && !(direction == DirectionEnum::DOWN) {
             direction = DirectionEnum::UP;
         }
@@ -116,7 +121,7 @@ fn main() -> ! {
         if b_left.is_low() && !(direction == DirectionEnum::RIGHT) {
             direction = DirectionEnum::LEFT;
         }
-
+        //поиск столкновений с краями
         if (((snake_buffer[0] % 8) == 0) && (direction == DirectionEnum::LEFT))
             || (((snake_buffer[0] % 8) == 7) && (direction == DirectionEnum::RIGHT))
             || ((snake_buffer[0] <= 7) && (direction == DirectionEnum::UP))
@@ -130,14 +135,14 @@ fn main() -> ! {
                 &mut direction,
             );
         }
-
+        //алгоритм перемещения хвоста змейки
         let snake_end_index = snake_buffer.iter().position(|&i| i == 65).unwrap() - 1;
         let snake_tail_save = snake_buffer[snake_end_index];
         snake_buffer[snake_end_index] = 65;
         for i in (1..NUM_LEDS).rev() {
             snake_buffer[i] = snake_buffer[i - 1];
         }
-
+        //перемещение головы змейки
         match direction {
             DirectionEnum::UP => {
                 snake_buffer[0] -= 8;
@@ -152,7 +157,7 @@ fn main() -> ! {
                 snake_buffer[0] += 1;
             }
         }
-
+        //проверка что голова змейки не столкнулась ни с одной из чешуек
         for scale in &snake_buffer[1..] {
             if *scale == snake_buffer[0] {
                 pre_game(
@@ -165,7 +170,7 @@ fn main() -> ! {
                 break;
             }
         }
-
+        //проверка что змейка сьела яблоко
         if snake_buffer[0] == apple_pos {
             snake_buffer[snake_end_index + 1] = snake_tail_save;
             apple_pos = rng.gen_range(0..NUM_LEDS as u8);
@@ -173,7 +178,7 @@ fn main() -> ! {
                 apple_pos = rng.gen_range(0..NUM_LEDS as u8);
             }
         }
-
+        //отрисовка змейки и яблок на дисплее
         let data = (0..NUM_LEDS).map(|i| {
             if snake_buffer.contains(&(i as u8)) {
                 GREEN
@@ -188,7 +193,7 @@ fn main() -> ! {
         ws.write(brightness(data, 255)).unwrap();
         delay.delay(100.millis());
     }
-
+    //функция подготовки к игре
     fn pre_game(
         ws: &mut ws2812_spi::prerendered::Ws2812<'_, stm32f4xx_hal::spi::Spi<pac::SPI1>>,
         delay: &mut stm32f4xx_hal::timer::Delay<pac::TIM1, 1000000>,
@@ -230,7 +235,7 @@ fn main() -> ! {
         // snake_buffer[5] = 38;
         *direction = DirectionEnum::LEFT;
     }
-
+    //функция заставки паузы
     fn pause(
         ws: &mut ws2812_spi::prerendered::Ws2812<'_, stm32f4xx_hal::spi::Spi<pac::SPI1>>,
         delay: &mut stm32f4xx_hal::timer::Delay<pac::TIM1, 1000000>,
